@@ -305,28 +305,53 @@ address                                |                          |        |
         ZIPLIST_LENGTH(zl) = intrev16ifbe(intrev16ifbe(ZIPLIST_LENGTH(zl))+incr); \
 }
 
+/* We use this function to receive information about a ziplist entry.
+ * Note that this is not how the data is actually encoded, is just what we
+ * get filled by a function in order to operate more easily. */
 /*
  * 保存 ziplist 节点信息的结构
+ *
+ * 当前节点的总长度=headersize+len;
  */
 typedef struct zlentry {
-
-    // prevrawlen ：前置节点的长度
+    // prevrawlen ：前置节点的长度信息
+    //     如果前一节点的长度小于254字节，prevrawlensize = 1；前一节点的长度就保存在这一个字节里面。
+    //     如果前一节点的长度大于等于254字节，prevrawlensize = 5；其中属性的第一字节会被设置为 OxFE (十进制值 254 )，
+    //        而之后的四字节则用于保存前一节点的长度。
     // prevrawlensize ：编码 prevrawlen 所需的字节大小
-    unsigned int prevrawlensize, prevrawlen;
+    //     如果前一节点的长度小于254字节，prevrawlensize = 1
+    //     如果前一节点的长度大于等于254字节，prevrawlensize = 5
+    unsigned int prevrawlensize; /* Bytes used to encode the previous entry len*/
+    unsigned int prevrawlen;     /* Previous entry len. */
 
     // len ：当前节点值的长度
     // lensize ：编码 len 所需的字节大小
-    unsigned int lensize, len;
+    //    字节数组时：1 2 5
+    //    整数时：1, 2, 3, 4, 8 or 0 (for 4 bit immediate)
+    unsigned int lensize;        /* Bytes used to encode this entry type/len.
+                                    For example strings have a 1, 2 or 5 bytes
+                                    header. Integers always use a single byte.*/
+    unsigned int len;            /* Bytes used to represent the actual entry.
+                                    For strings this is just the string length
+                                    while for integers it is 1, 2, 3, 4, 8 or
+                                    0 (for 4 bit immediate) depending on the
+                                    number range. */
 
     // 当前节点 header 的大小
     // 等于 prevrawlensize + lensize
-    unsigned int headersize;
+    unsigned int headersize;     /* prevrawlensize + lensize. */
 
     // 当前节点值所使用的编码类型
-    unsigned char encoding;
+    //   字节数组：00 01 10
+    //   整数：11
+    unsigned char encoding;      /* Set to ZIP_STR_* or ZIP_INT_* depending on
+                                    the entry encoding. However for 4 bits
+                                    immediate integers this can assume a range
+                                    of values and must be range-checked. */
 
     // 指向当前节点的指针
-    unsigned char *p;
+    unsigned char *p;            /* Pointer to the very start of the entry, that
+                                    is, this points to prev-entry-len field. */
 
 } zlentry;
 
